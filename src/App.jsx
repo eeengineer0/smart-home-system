@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
-import Login from "./components/Login";
-import Dashboard from "./components/Dashboard";
-import UserManager from "./components/UserManager";
+import { useState, useEffect } from "react";
+import Login from "./Login";
+import Dashboard from "./Dashboard";
+import UserManager from "./UserManager";
 
 const API = import.meta.env.VITE_API_BASE_URL;
 
@@ -9,73 +9,85 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [page, setPage] = useState("dashboard");
   const [data, setData] = useState({});
+  const [history, setHistory] = useState({});
 
+  // Restore login on refresh
   useEffect(() => {
     const saved = localStorage.getItem("user");
     if (saved) setUser(JSON.parse(saved));
   }, []);
 
+  // Poll Data (Runs every 2 seconds when logged in)
   useEffect(() => {
     if (!user) return;
 
     const fetchData = () => {
+      // 1. Fetch Real-time Data
       fetch(`${API}/realtime`)
-        .then(res => res.json())
-        .then(setData)
-        .catch(console.error);
+        .then((res) => res.json())
+        .then((newData) => setData(newData))
+        .catch((err) => console.error("Data fetch error:", err));
+
+      // 2. Fetch History Data (Graph)
+      fetch(`${API}/history`)
+        .then((res) => res.json())
+        .then((newHistory) => setHistory(newHistory))
+        .catch(() => setHistory({})); // Fallback if /history not implemented
     };
 
     fetchData();
-    const i = setInterval(fetchData, 2000);
-    return () => clearInterval(i);
+    const interval = setInterval(fetchData, 2000);
+    return () => clearInterval(interval);
   }, [user]);
 
-  const logout = () => {
+  const handleLogout = () => {
     localStorage.removeItem("user");
     setUser(null);
   };
 
-  const sendCommand = (device, action) => {
+  const sendCommand = (node, command) => {
     fetch(`${API}/command`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device, action }),
-    });
+      body: JSON.stringify({ device: node, action: command }),
+    })
+      .then((res) => res.json())
+      .then(console.log);
   };
 
-  const updateLimits = (device) => {
-    const temp = document.getElementById(`${device}-temp-limit`).value;
-    const gas = document.getElementById(`${device}-gas-limit`).value;
+  const updateLimits = (node) => {
+    const tempLimit = document.getElementById(`${node}-temp-limit`).value;
+    const gasLimit = document.getElementById(`${node}-gas-limit`).value;
 
     fetch(`${API}/set_limits`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        device,
-        temp_th: parseFloat(temp),
-        gas_th: parseFloat(gas),
+        device: node,
+        temp_th: parseFloat(tempLimit),
+        gas_th: parseFloat(gasLimit),
       }),
-    }).then(() => alert("Limits updated"));
+    }).then(() => alert("Limits updated!"));
   };
 
   if (!user) return <Login setUser={setUser} />;
 
   return (
-    <>
+    <div>
       {page === "dashboard" && (
         <Dashboard
           user={user}
           data={data}
-          logout={logout}
+          history={history}
+          logout={handleLogout}
           sendCommand={sendCommand}
           updateLimits={updateLimits}
           goUsers={() => setPage("users")}
         />
       )}
-
       {page === "users" && user.role === "admin" && (
         <UserManager goBack={() => setPage("dashboard")} />
       )}
-    </>
+    </div>
   );
 }
