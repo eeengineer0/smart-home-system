@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import Login from "./Login";
-import Dashboard from "./Dashboard";
-import UserManager from "./UserManager";
+import Login from "./components/Login";
+import Dashboard from "./components/Dashboard";
+import UserManager from "./components/UserManager";
 
 const API = import.meta.env.VITE_API_BASE_URL;
 
@@ -14,7 +14,9 @@ export default function App() {
   // Restore login on refresh
   useEffect(() => {
     const saved = localStorage.getItem("user");
-    if (saved) setUser(JSON.parse(saved));
+    if (saved) {
+      setUser(JSON.parse(saved));
+    }
   }, []);
 
   // Poll Data (Runs every 2 seconds when logged in)
@@ -32,11 +34,12 @@ export default function App() {
       fetch(`${API}/history`)
         .then((res) => res.json())
         .then((newHistory) => setHistory(newHistory))
-        .catch(() => setHistory({})); // Fallback if /history not implemented
+        .catch((err) => console.error("History fetch error:", err));
     };
 
-    fetchData();
-    const interval = setInterval(fetchData, 2000);
+    fetchData(); // Initial fetch
+    const interval = setInterval(fetchData, 2000); // Poll every 2s
+
     return () => clearInterval(interval);
   }, [user]);
 
@@ -70,7 +73,9 @@ export default function App() {
     }).then(() => alert("Limits updated!"));
   };
 
-  if (!user) return <Login setUser={setUser} />;
+  if (!user) {
+    return <Login setUser={setUser} />;
+  }
 
   return (
     <div>
@@ -85,6 +90,7 @@ export default function App() {
           goUsers={() => setPage("users")}
         />
       )}
+
       {page === "users" && user.role === "admin" && (
         <UserManager goBack={() => setPage("dashboard")} />
       )}
