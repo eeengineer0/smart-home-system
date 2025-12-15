@@ -6,49 +6,42 @@ import json
 import os
 
 # =====================================================
-# USER STORAGE (FIXED FOR CLOUD HOSTING)
+# FILE STORAGE (SAFE FOR RAILWAY)
 # =====================================================
 
-# 1. Force Python to look in the exact folder where main.py lives
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 USERS_FILE = os.path.join(BASE_DIR, "users.json")
 
-def load_users():
-    print(f"DEBUG: Loading users from {USERS_FILE}")
 
-    # 2. Try to read the file
+def load_users():
     if os.path.exists(USERS_FILE):
         try:
             with open(USERS_FILE, "r") as f:
                 return json.load(f)
-        except Exception as e:
-            print(f"ERROR: File exists but is corrupt: {e}")
+        except Exception:
+            pass
 
-    # 3. EMERGENCY FALLBACK
-    # If file is missing or corrupt, we return these hardcoded users.
-    # This prevents the "White Screen" because 'admin' will ALWAYS exist.
-    print("WARNING: users.json not found or readable. Using default in-memory users.")
-    default_users = {
+    # fallback users (always exists)
+    users = {
         "admin": {"password": "admin123", "role": "admin"},
         "user": {"password": "user123", "role": "user"},
     }
-    
-    # Try to write this file back to disk (might fail on some read-only clouds, but that's okay)
+
     try:
         with open(USERS_FILE, "w") as f:
-            json.dump(default_users, f, indent=4)
-    except Exception as e:
-        print(f"WARNING: Could not save default users file: {e}")
+            json.dump(users, f, indent=4)
+    except Exception:
+        pass
 
-    return default_users
+    return users
 
 
-def save_users(users_dict):
+def save_users(users):
     try:
         with open(USERS_FILE, "w") as f:
-            json.dump(users_dict, f, indent=4)
-    except Exception as e:
-        print(f"ERROR: Could not save users: {e}")
+            json.dump(users, f, indent=4)
+    except Exception:
+        pass
 
 
 users = load_users()
@@ -56,30 +49,31 @@ users = load_users()
 # =====================================================
 # FASTAPI APP
 # =====================================================
-app = FastAPI()
 
-origins = [
-    "http://localhost:5173",
-    "smart-home-system-lime.vercel.app",
-]
+app = FastAPI(title="IoT Backend")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=[
+        "http://localhost:5173",
+        "https://YOUR-FRONTEND.vercel.app",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # =====================================================
-# STORAGE FOR IOT DATA
+# DATA STORAGE
 # =====================================================
-latest_data: dict = {}
-system_limits: dict = {}  # { "ESP32-1": {"temp_th": 30.0, "gas_th": 1.2}, ... }
+
+latest_data = {}
+system_limits = {}
 
 # =====================================================
-# Pydantic MODELS
+# MODELS
 # =====================================================
+
 class UserCreate(BaseModel):
     username: str
     password: str
@@ -111,70 +105,17 @@ class LimitUpdate(BaseModel):
     temp_th: float | None = None
     gas_th: float | None = None
 
-
 # =====================================================
 # USER ROUTES
 # =====================================================
-@app.post("/add_user")
-def add_user(u: UserCreate):
-    global users
-
-    if u.username in users:
-        return {"status": "error", "msg": "User already exists"}
-
-    # allow admin OR user (whatever frontend sends)
-    users[u.username] = {"password": u.password, "role": u.role}
-    save_users(users)
-    return {"status": "ok", "msg": "User added"}
-
-
-@app.post("/update_user")
-def update_user(u: UserUpdate):
-    global users
-
-    if u.username not in users:
-        return {"status": "error", "msg": "User not found"}
-
-    if u.password is not None and u.password != "":
-        users[u.username]["password"] = u.password
-
-    if u.role is not None and u.role != "":
-        users[u.username]["role"] = u.role
-
-    save_users(users)
-    return {"status": "ok", "msg": "User updated"}
-
-
-@app.post("/delete_user")
-def delete_user(u: UserDelete):
-    global users
-
-    # prevent deleting default admin by mistake if you want
-    if u.username == "admin":
-        return {"status": "error", "msg": "Cannot delete default admin"}
-
-    if u.username not in users:
-        return {"status": "error", "msg": "User not found"}
-
-    del users[u.username]
-    save_users(users)
-    return {"status": "ok", "msg": "User deleted"}
-
-
-@app.get("/users")
-def list_users():
-    # Do not expose passwords in real life, but OK for your project
-    return users
-
 
 @app.post("/login")
 def login(u: UserLogin):
-    # RELOAD USERS from memory to be safe, or just check global dict
     if u.username not in users:
-        return {"status": "error", "msg": "Invalid username or password"}
+        return {"status": "error", "msg": "Invalid credentials"}
 
     if users[u.username]["password"] != u.password:
-        return {"status": "error", "msg": "Invalid username or password"}
+        return {"status": "error", "msg": "Invalid credentials"}
 
     return {
         "status": "ok",
@@ -185,99 +126,119 @@ def login(u: UserLogin):
     }
 
 
+@app.get("/users")
+def list_users():
+    return users
+
+
+@app.post("/add_user")
+def add_user(u: UserCreate):
+    if u.username in users:
+        return {"status": "error", "msg": "User exists"}
+
+    users[u.username] = {"password": u.password, "role": u.role}
+    save_users(users)
+    return {"status": "ok"}
+
+
+@app.post("/update_user")
+def update_user(u: UserUpdate):
+    if u.username not in users:
+        return {"status": "error"}
+
+    if u.password:
+        users[u.username]["password"] = u.password
+    if u.role:
+        users[u.username]["role"] = u.role
+
+    save_users(users)
+    return {"status": "ok"}
+
+
+@app.post("/delete_user")
+def delete_user(u: UserDelete):
+    if u.username == "admin":
+        return {"status": "error", "msg": "Cannot delete admin"}
+
+    if u.username not in users:
+        return {"status": "error"}
+
+    del users[u.username]
+    save_users(users)
+    return {"status": "ok"}
+
 # =====================================================
-# PARSE SENSOR MESSAGES
+# MQTT LOGIC
 # =====================================================
+
 def parse_sensor_message(raw: str):
     result = {}
     try:
-        start = raw.find("[") + 1
-        end = raw.find("]")
-        result["node"] = raw[start:end]
+        node = raw[raw.find("[") + 1 : raw.find("]")]
+        result["node"] = node
 
-        parts = raw.split("] - ")[1]
-        time_str = parts.split()[0]
-        result["time"] = time_str
+        body = raw.split("] - ")[1]
+        time = body.split()[0]
+        result["time"] = time
 
-        sensors_str = parts[len(time_str):].strip()
-        sensor_parts = sensors_str.split("|")
-
-        for part in sensor_parts:
-            part = part.strip()
-            if ":" in part:
-                key, val = part.split(":", 1)
-                key = key.strip()
-                val = val.strip()
-
-                val = (
-                    val.replace("C", "")
-                    .replace("%", "")
-                    .replace("V", "")
-                    .replace("ms", "")
-                    .replace("(MANUAL)", "")
-                    .strip()
-                )
-
+        sensors = body[len(time):].strip().split("|")
+        for s in sensors:
+            if ":" in s:
+                k, v = s.split(":", 1)
+                v = v.replace("C", "").replace("%", "").replace("V", "").strip()
                 try:
-                    if "." in val:
-                        val = float(val)
-                    else:
-                        val = int(val)
-                except Exception:
+                    v = float(v) if "." in v else int(v)
+                except:
                     pass
-
-                result[key.lower()] = val
-
-    except Exception as e:
-        print("Parse error:", e)
+                result[k.lower()] = v
+    except:
+        pass
 
     return result
 
 
-# =====================================================
-# MQTT CALLBACKS
-# =====================================================
 def on_connect(client, userdata, flags, rc):
     print("MQTT connected:", rc)
     client.subscribe("iot/pi/data")
 
 
 def on_message(client, userdata, msg):
-    global latest_data, system_limits
     raw = msg.payload.decode()
     parsed = parse_sensor_message(raw)
 
-    if parsed:
-        node = parsed["node"]
+    if not parsed:
+        return
 
-        if node not in system_limits:
-            system_limits[node] = {"temp_th": 30.0, "gas_th": 1.20}
+    node = parsed["node"]
 
-        parsed["temp_th"] = system_limits[node]["temp_th"]
-        parsed["gas_th"] = system_limits[node]["gas_th"]
+    if node not in system_limits:
+        system_limits[node] = {"temp_th": 30.0, "gas_th": 1.2}
 
-        latest_data[node] = parsed
+    parsed["temp_th"] = system_limits[node]["temp_th"]
+    parsed["gas_th"] = system_limits[node]["gas_th"]
+
+    latest_data[node] = parsed
 
 
-# =====================================================
-# MQTT CLIENT SETUP
-# =====================================================
 mqtt_client = mqtt.Client()
 mqtt_client.username_pw_set("p_user", "P_user123")
 mqtt_client.tls_set()
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 
-mqtt_client.connect(
-    "08d5c716cf9f46518abcda4d565e5141.s1.eu.hivemq.cloud",
-    port=8883,
-)
-mqtt_client.loop_start()
 
+@app.on_event("startup")
+def start_mqtt():
+    mqtt_client.connect(
+        "08d5c716cf9f46518abcda4d565e5141.s1.eu.hivemq.cloud",
+        port=8883,
+    )
+    mqtt_client.loop_start()
 
 # =====================================================
-# BASIC ROUTES
+# API ROUTES
 # =====================================================
+
 @app.get("/")
 def root():
     return {"message": "Backend working!"}
@@ -288,39 +249,24 @@ def realtime():
     return latest_data
 
 
-# =====================================================
-# IOT COMMAND & LIMIT ROUTES
-# =====================================================
 @app.post("/command")
 def send_command(cmd: Command):
-    action_text = cmd.action.replace("_", " ")
-    message = f"{cmd.device}:{action_text}"
-    r = mqtt_client.publish("iot/pi/command", message)
-    print("Publishing:", message, "→ RC =", r.rc)
-    return {"status": "ok", "sent": message}
+    msg = f"{cmd.device}:{cmd.action.replace('_', ' ')}"
+    mqtt_client.publish("iot/pi/command", msg)
+    return {"status": "ok", "sent": msg}
 
 
 @app.post("/set_limits")
 def set_limits(limit: LimitUpdate):
-    device = limit.device
-
-    if device not in system_limits:
-        system_limits[device] = {"temp_th": 30.0, "gas_th": 1.20}
+    if limit.device not in system_limits:
+        system_limits[limit.device] = {"temp_th": 30.0, "gas_th": 1.2}
 
     if limit.temp_th is not None:
-        system_limits[device]["temp_th"] = limit.temp_th
-        msg = f"{device}:TEMP={limit.temp_th}"
-        mqtt_client.publish("iot/pi/command", msg)
-        print("Publishing:", msg)
+        system_limits[limit.device]["temp_th"] = limit.temp_th
+        mqtt_client.publish("iot/pi/command", f"{limit.device}:TEMP={limit.temp_th}")
 
     if limit.gas_th is not None:
-        system_limits[device]["gas_th"] = limit.gas_th
-        msg = f"{device}:GAS={limit.gas_th}"
-        mqtt_client.publish("iot/pi/command", msg)
-        print("Publishing:", msg)
+        system_limits[limit.device]["gas_th"] = limit.gas_th
+        mqtt_client.publish("iot/pi/command", f"{limit.device}:GAS={limit.gas_th}")
 
-    return {
-        "status": "ok",
-        "updated_device": device,
-        "limits": system_limits[device],
-    }
+    return {"status": "ok", "limits": system_limits[limit.device]}
