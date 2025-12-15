@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { API_URL } from "../config/api";
 
-export default function Login({ onLogin }) {
+const API = import.meta.env.VITE_API_BASE_URL;
+
+export default function Login({ setUser }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -10,7 +11,7 @@ export default function Login({ onLogin }) {
     setError("");
 
     try {
-      const res = await fetch(`${API_URL}/login`, {
+      const res = await fetch(`${API}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
@@ -18,34 +19,25 @@ export default function Login({ onLogin }) {
 
       const data = await res.json();
 
-      if (data.status !== "ok") {
+      if (!res.ok || data.status === "error") {
         setError(data.msg || "Login failed");
         return;
       }
 
-      onLogin(data.user);
-    } catch (err) {
-      setError("Backend not reachable");
+      localStorage.setItem("user", JSON.stringify(data.user));
+      setUser(data.user);
+    } catch {
+      setError("Backend unreachable");
     }
   };
 
   return (
-    <div style={{ padding: 40 }}>
-      <h2>Login</h2>
+    <div style={{ textAlign: "center", marginTop: "100px" }}>
+      <h2>🔐 Login</h2>
 
-      <input
-        placeholder="Username"
-        value={username}
-        onChange={(e) => setUsername(e.target.value)}
-      />
+      <input placeholder="Username" onChange={e => setUsername(e.target.value)} />
       <br /><br />
-
-      <input
-        type="password"
-        placeholder="Password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-      />
+      <input type="password" placeholder="Password" onChange={e => setPassword(e.target.value)} />
       <br /><br />
 
       <button onClick={handleLogin}>Login</button>
