@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import Login from "./components/Login.jsx";
-import Dashboard from "./components/Dashboard.jsx";
-import UserManager from "./components/UserManager.jsx";
+import Login from "./components/Login";
+import Dashboard from "./components/Dashboard";
+import UserManager from "./components/UserManager";
 
 const API = import.meta.env.VITE_API_BASE_URL;
 
@@ -19,27 +19,24 @@ export default function App() {
     }
   }, []);
 
-  // Poll Data (Runs every 2 seconds when logged in)
+  // Poll Data
   useEffect(() => {
     if (!user) return;
 
     const fetchData = () => {
-      // 1. Fetch Real-time Data
       fetch(`${API}/realtime`)
         .then((res) => res.json())
         .then((newData) => setData(newData))
         .catch((err) => console.error("Data fetch error:", err));
 
-      // 2. Fetch History Data (Graph)
       fetch(`${API}/history`)
         .then((res) => res.json())
         .then((newHistory) => setHistory(newHistory))
         .catch((err) => console.error("History fetch error:", err));
     };
 
-    fetchData(); // Initial fetch
-    const interval = setInterval(fetchData, 2000); // Poll every 2s
-
+    fetchData();
+    const interval = setInterval(fetchData, 2000);
     return () => clearInterval(interval);
   }, [user]);
 
@@ -53,9 +50,7 @@ export default function App() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ device: node, action: command }),
-    })
-      .then((res) => res.json())
-      .then(console.log);
+    }).then(res => res.json()).then(console.log);
   };
 
   const updateLimits = (node) => {
@@ -90,7 +85,7 @@ export default function App() {
           goUsers={() => setPage("users")}
         />
       )}
-
+      
       {page === "users" && user.role === "admin" && (
         <UserManager goBack={() => setPage("dashboard")} />
       )}
