@@ -1,148 +1,263 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import time
+import paho.mqtt.client as mqtt
+import json
+import os
 
+# =====================================================
+# FILE STORAGE
+# =====================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+USERS_FILE = os.path.join(BASE_DIR, "users.json")
+
+
+def load_users():
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, "r") as f:
+                return json.load(f)
+        except:
+            pass
+
+    default_users = {
+        "admin": {"password": "admin123", "role": "admin"},
+        "user": {"password": "user123", "role": "user"},
+    }
+
+    try:
+        with open(USERS_FILE, "w") as f:
+            json.dump(default_users, f, indent=4)
+    except:
+        pass
+
+    return default_users
+
+
+def save_users(users_dict):
+    try:
+        with open(USERS_FILE, "w") as f:
+            json.dump(users_dict, f, indent=4)
+    except:
+        pass
+
+
+users = load_users()
+
+# =====================================================
+# FASTAPI APP
+# =====================================================
 app = FastAPI()
 
-# 🚨 TEMP: allow all origins (fixes CORS + 405 confusion)
+# 🔥 FINAL CORS CONFIG (WORKS WITH VERCEL)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[
+        "http://localhost:5173",
+        "https://smart-home-system-2qcl.vercel.app/",  # 
+    ],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------------- MODELS ----------------
-class LoginData(BaseModel):
-    username: str
-    password: str
+# =====================================================
+# GLOBAL STORAGE
+# =====================================================
+latest_data = {}
+system_limits = {}
 
-class Command(BaseModel):
-    node: str
-    command: str
-
-class Limits(BaseModel):
-    node: str
-    temp_th: float
-    gas_th: float
-
-class User(BaseModel):
+# =====================================================
+# MODELS
+# =====================================================
+class UserCreate(BaseModel):
     username: str
     password: str
     role: str
 
-# ---------------- MOCK DATA ----------------
-users = {
-    "admin": {"password": "admin123", "role": "admin"},
-    "user": {"password": "user123", "role": "user"},
-}
 
-devices = {
-    "Node-1": {
-        "t": 24,
-        "h": 55,
-        "ao_v": 0.3,
-        "led": "OFF",
-        "fan": "OFF",
-        "temp_th": 30,
-        "gas_th": 0.6,
-        "time": "",
-        "_timestamp": 0,
-    }
-}
+class UserLogin(BaseModel):
+    username: str
+    password: str
 
-history = {
-    "Node-1": {
-        "time": [],
-        "temp": [],
-        "gas": [],
-    }
-}
 
-# ---------------- ROUTES ----------------
-@app.get("/")
-def root():
-    return {"message": "Backend working!"}
+class UserUpdate(BaseModel):
+    username: str
+    password: str | None = None
+    role: str | None = None
 
+
+class UserDelete(BaseModel):
+    username: str
+
+
+class Command(BaseModel):
+    device: str
+    action: str
+
+
+class LimitUpdate(BaseModel):
+    device: str
+    temp_th: float | None = None
+    gas_th: float | None = None
+
+# =====================================================
+# USER ROUTES
+# =====================================================
 @app.post("/login")
-def login(data: LoginData):
-    if data.username not in users:
-        return {"status": "error", "msg": "User not found"}
+def login(u: UserLogin):
+    if u.username not in users:
+        return {"status": "error", "msg": "Invalid credentials"}
 
-    if users[data.username]["password"] != data.password:
-        return {"status": "error", "msg": "Wrong password"}
+    if users[u.username]["password"] != u.password:
+        return {"status": "error", "msg": "Invalid credentials"}
 
     return {
         "status": "ok",
         "user": {
-            "username": data.username,
-            "role": users[data.username]["role"],
-        }
+            "username": u.username,
+            "role": users[u.username]["role"],
+        },
     }
 
-@app.get("/data")
-def get_data():
-    now = time.strftime("%H:%M:%S")
-    for node in devices:
-        devices[node]["time"] = now
-        devices[node]["_timestamp"] = int(time.time() * 1000)
-
-        history[node]["time"].append(now)
-        history[node]["temp"].append(devices[node]["t"])
-        history[node]["gas"].append(devices[node]["ao_v"])
-
-        history[node]["time"] = history[node]["time"][-20:]
-        history[node]["temp"] = history[node]["temp"][-20:]
-        history[node]["gas"] = history[node]["gas"][-20:]
-
-    return devices
-
-@app.get("/history")
-def get_history():
-    return history
-
-@app.post("/command")
-def command(cmd: Command):
-    if cmd.node in devices:
-        if cmd.command == "LED_ON":
-            devices[cmd.node]["led"] = "ON"
-        if cmd.command == "LED_OFF":
-            devices[cmd.node]["led"] = "OFF"
-        if cmd.command == "FAN_ON":
-            devices[cmd.node]["fan"] = "ON"
-        if cmd.command == "FAN_OFF":
-            devices[cmd.node]["fan"] = "OFF"
-    return {"status": "ok"}
-
-@app.post("/update_limits")
-def update_limits(l: Limits):
-    devices[l.node]["temp_th"] = l.temp_th
-    devices[l.node]["gas_th"] = l.gas_th
-    return {"status": "ok"}
 
 @app.get("/users")
-def get_users():
-    return {u: {"role": users[u]["role"]} for u in users}
+def list_users():
+    return users
+
 
 @app.post("/add_user")
-def add_user(u: User):
+def add_user(u: UserCreate):
     if u.username in users:
         return {"status": "error", "msg": "User exists"}
+
     users[u.username] = {"password": u.password, "role": u.role}
+    save_users(users)
     return {"status": "ok"}
+
 
 @app.post("/update_user")
-def update_user(u: User):
+def update_user(u: UserUpdate):
     if u.username not in users:
-        return {"status": "error", "msg": "User not found"}
+        return {"status": "error"}
+
     if u.password:
         users[u.username]["password"] = u.password
-    users[u.username]["role"] = u.role
+    if u.role:
+        users[u.username]["role"] = u.role
+
+    save_users(users)
     return {"status": "ok"}
 
+
 @app.post("/delete_user")
-def delete_user(u: dict):
-    users.pop(u["username"], None)
+def delete_user(u: UserDelete):
+    if u.username == "admin":
+        return {"status": "error", "msg": "Cannot delete admin"}
+
+    users.pop(u.username, None)
+    save_users(users)
     return {"status": "ok"}
+
+# =====================================================
+# SENSOR PARSER
+# =====================================================
+def parse_sensor_message(raw):
+    result = {}
+    try:
+        start = raw.find("[") + 1
+        end = raw.find("]")
+        result["node"] = raw[start:end]
+
+        parts = raw.split("] - ")[1]
+        time_str = parts.split()[0]
+        result["time"] = time_str
+
+        sensors = parts[len(time_str):].strip().split("|")
+        for s in sensors:
+            if ":" in s:
+                k, v = s.split(":")
+                v = v.replace("C", "").replace("%", "").replace("V", "").strip()
+                try:
+                    v = float(v)
+                except:
+                    pass
+                result[k.strip().lower()] = v
+    except:
+        pass
+
+    return result
+
+# =====================================================
+# MQTT CALLBACKS
+# =====================================================
+def on_connect(client, userdata, flags, rc):
+    client.subscribe("iot/pi/data")
+
+
+def on_message(client, userdata, msg):
+    global latest_data, system_limits
+
+    raw = msg.payload.decode()
+    parsed = parse_sensor_message(raw)
+
+    if parsed:
+        node = parsed["node"]
+
+        if node not in system_limits:
+            system_limits[node] = {"temp_th": 30.0, "gas_th": 1.2}
+
+        parsed["temp_th"] = system_limits[node]["temp_th"]
+        parsed["gas_th"] = system_limits[node]["gas_th"]
+
+        latest_data[node] = parsed
+
+# =====================================================
+# MQTT SETUP
+# =====================================================
+mqtt_client = mqtt.Client()
+mqtt_client.username_pw_set("p_user", "P_user123")
+mqtt_client.tls_set()
+mqtt_client.on_connect = on_connect
+mqtt_client.on_message = on_message
+
+mqtt_client.connect(
+    "08d5c716cf9f46518abcda4d565e5141.s1.eu.hivemq.cloud",
+    8883
+)
+mqtt_client.loop_start()
+
+# =====================================================
+# API ROUTES
+# =====================================================
+@app.get("/")
+def root():
+    return {"message": "Backend working!"}
+
+
+@app.get("/realtime")
+def realtime():
+    return latest_data
+
+
+@app.post("/command")
+def send_command(cmd: Command):
+    msg = f"{cmd.device}:{cmd.action.replace('_', ' ')}"
+    mqtt_client.publish("iot/pi/command", msg)
+    return {"status": "ok"}
+
+
+@app.post("/set_limits")
+def set_limits(l: LimitUpdate):
+    if l.device not in system_limits:
+        system_limits[l.device] = {"temp_th": 30.0, "gas_th": 1.2}
+
+    if l.temp_th is not None:
+        system_limits[l.device]["temp_th"] = l.temp_th
+        mqtt_client.publish("iot/pi/command", f"{l.device}:TEMP={l.temp_th}")
+
+    if l.gas_th is not None:
+        system_limits[l.device]["gas_th"] = l.gas_th
+        mqtt_client.publish("iot/pi/command", f"{l.device}:GAS={l.gas_th}")
+
+    return {"status": "ok", "limits": system_limits[l.device]}
