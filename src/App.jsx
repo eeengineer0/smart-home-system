@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import Login from "./components/Login";
-import Dashboard from "./components/Dashboard";
-import UserManager from "./components/UserManager";
+import Login from "./components/Login.jsx";
+import Dashboard from "./components/Dashboard.jsx";
+import UserManager from "./components/UserManager.jsx";
 
+// Make sure VITE_API_BASE_URL is set in .env as your backend URL
 const API = import.meta.env.VITE_API_BASE_URL;
 
 export default function App() {
@@ -14,28 +15,34 @@ export default function App() {
   // Restore login on refresh
   useEffect(() => {
     const saved = localStorage.getItem("user");
-    if (saved) {
-      setUser(JSON.parse(saved));
-    }
+    if (saved) setUser(JSON.parse(saved));
   }, []);
 
-  // Poll Data
+  // Poll data every 2 seconds
   useEffect(() => {
     if (!user) return;
 
     const fetchData = () => {
-      fetch(`${API}/realtime`)
-        .then((res) => res.json())
-        .then((newData) => setData(newData))
-        .catch((err) => console.error("Data fetch error:", err));
+      // ✅ Real-time data
+      fetch(`${API}/data`) // replace /data if your backend uses /realtime or other
+        .then(res => {
+          if (!res.ok) throw new Error("Data fetch failed");
+          return res.json();
+        })
+        .then(newData => setData(newData))
+        .catch(err => console.error("Data fetch error:", err));
 
+      // ✅ History data
       fetch(`${API}/history`)
-        .then((res) => res.json())
-        .then((newHistory) => setHistory(newHistory))
-        .catch((err) => console.error("History fetch error:", err));
+        .then(res => {
+          if (!res.ok) throw new Error("History fetch failed");
+          return res.json();
+        })
+        .then(newHistory => setHistory(newHistory))
+        .catch(err => console.error("History fetch error:", err));
     };
 
-    fetchData();
+    fetchData(); // Initial fetch
     const interval = setInterval(fetchData, 2000);
     return () => clearInterval(interval);
   }, [user]);
@@ -49,28 +56,30 @@ export default function App() {
     fetch(`${API}/command`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device: node, action: command }),
-    }).then(res => res.json()).then(console.log);
+      body: JSON.stringify({ node, command }),
+    })
+      .then(res => res.json())
+      .then(console.log)
+      .catch(err => console.error("Command error:", err));
   };
 
   const updateLimits = (node) => {
-    const tempLimit = document.getElementById(`${node}-temp-limit`).value;
-    const gasLimit = document.getElementById(`${node}-gas-limit`).value;
+    const tempLimit = parseFloat(document.getElementById(`${node}-temp-limit`).value);
+    const gasLimit = parseFloat(document.getElementById(`${node}-gas-limit`).value);
 
-    fetch(`${API}/set_limits`, {
+    fetch(`${API}/update_limits`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        device: node,
-        temp_th: parseFloat(tempLimit),
-        gas_th: parseFloat(gasLimit),
-      }),
-    }).then(() => alert("Limits updated!"));
+      body: JSON.stringify({ node, temp_th: tempLimit, gas_th: gasLimit }),
+    })
+      .then(res => {
+        if (!res.ok) throw new Error("Update limits failed");
+        alert("Limits updated!");
+      })
+      .catch(err => console.error(err));
   };
 
-  if (!user) {
-    return <Login setUser={setUser} />;
-  }
+  if (!user) return <Login setUser={setUser} />;
 
   return (
     <div>
@@ -85,7 +94,7 @@ export default function App() {
           goUsers={() => setPage("users")}
         />
       )}
-      
+
       {page === "users" && user.role === "admin" && (
         <UserManager goBack={() => setPage("dashboard")} />
       )}
