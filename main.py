@@ -46,7 +46,7 @@ app = FastAPI()
 # Replace with your frontend URLs
 origins = [
     "http://localhost:5173",
-    "https://smart-home-system-2qcl.vercel.app",
+    "smarthome495.netlify.app",
 ]
 
 app.add_middleware(
