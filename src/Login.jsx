@@ -7,22 +7,30 @@ export default function Login({ setUser }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
-  const handleLogin = () => {
-    fetch(`${API}/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.status === "error") {
-          setError(data.msg);
-          return;
-        }
-        localStorage.setItem("user", JSON.stringify(data.user));
-        setUser(data.user);
-      })
-      .catch(() => setError("Server connection failed"));
+  const handleLogin = async () => {
+    setError("");
+
+    try {
+      const res = await fetch(`${API}/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ username, password }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || data.status === "error") {
+        setError(data.msg || `HTTP ${res.status}`);
+        return;
+      }
+
+      localStorage.setItem("user", JSON.stringify(data.user));
+      setUser(data.user);
+    } catch (err) {
+      setError("Backend unreachable");
+    }
   };
 
   return (
@@ -33,17 +41,19 @@ export default function Login({ setUser }) {
         placeholder="Username"
         value={username}
         onChange={(e) => setUsername(e.target.value)}
-        style={{ padding: "10px", margin: "10px", borderRadius: "5px", border: "1px solid #ccc" }}
+        style={{ padding: "10px", margin: "10px", borderRadius: "5px" }}
       />
       <br />
+
       <input
         type="password"
         placeholder="Password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
-        style={{ padding: "10px", margin: "10px", borderRadius: "5px", border: "1px solid #ccc" }}
+        style={{ padding: "10px", margin: "10px", borderRadius: "5px" }}
       />
       <br />
+
       <button
         onClick={handleLogin}
         style={{
@@ -53,7 +63,7 @@ export default function Login({ setUser }) {
           borderRadius: "6px",
           cursor: "pointer",
           border: "none",
-          marginTop: "10px"
+          marginTop: "10px",
         }}
       >
         Login
