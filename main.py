@@ -6,41 +6,37 @@ import json
 import os
 
 # =====================================================
-# FILE STORAGE
+# USER STORAGE (FIXED FOR CLOUD HOSTING)
 # =====================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 USERS_FILE = os.path.join(BASE_DIR, "users.json")
-
 
 def load_users():
     if os.path.exists(USERS_FILE):
         try:
             with open(USERS_FILE, "r") as f:
                 return json.load(f)
-        except:
-            pass
+        except Exception as e:
+            print(f"ERROR: File exists but is corrupt: {e}")
 
+    # Default users
     default_users = {
         "admin": {"password": "admin123", "role": "admin"},
         "user": {"password": "user123", "role": "user"},
     }
-
     try:
         with open(USERS_FILE, "w") as f:
             json.dump(default_users, f, indent=4)
-    except:
-        pass
-
+    except Exception as e:
+        print(f"WARNING: Could not save default users file: {e}")
     return default_users
-
 
 def save_users(users_dict):
     try:
         with open(USERS_FILE, "w") as f:
             json.dump(users_dict, f, indent=4)
-    except:
-        pass
-
+    except Exception as e:
+        print(f"ERROR: Could not save users: {e}")
 
 users = load_users()
 
@@ -49,52 +45,49 @@ users = load_users()
 # =====================================================
 app = FastAPI()
 
-# 🔥 FINAL CORS CONFIG (WORKS WITH VERCEL)
+# ==================== CORS FIX =====================
+origins = [
+    "http://localhost:5173",
+    "https://your-vercel-app.vercel.app",  # Replace with your Vercel URL
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "https://smart-home-system-2qcl.vercel.app/",  # 
-    ],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],  # Important for OPTIONS preflight
+    allow_headers=["*"],  # Important for Content-Type
 )
 
 # =====================================================
-# GLOBAL STORAGE
+# STORAGE FOR IOT DATA
 # =====================================================
-latest_data = {}
-system_limits = {}
+latest_data: dict = {}
+system_limits: dict = {}
 
 # =====================================================
-# MODELS
+# Pydantic MODELS
 # =====================================================
 class UserCreate(BaseModel):
     username: str
     password: str
     role: str
 
-
 class UserLogin(BaseModel):
     username: str
     password: str
-
 
 class UserUpdate(BaseModel):
     username: str
     password: str | None = None
     role: str | None = None
 
-
 class UserDelete(BaseModel):
     username: str
-
 
 class Command(BaseModel):
     device: str
     action: str
-
 
 class LimitUpdate(BaseModel):
     device: str
@@ -104,65 +97,50 @@ class LimitUpdate(BaseModel):
 # =====================================================
 # USER ROUTES
 # =====================================================
-@app.post("/login")
-def login(u: UserLogin):
+@app.post("/add_user")
+def add_user(u: UserCreate):
+    global users
+    if u.username in users:
+        return {"status": "error", "msg": "User already exists"}
+    users[u.username] = {"password": u.password, "role": u.role}
+    save_users(users)
+    return {"status": "ok", "msg": "User added"}
+
+@app.post("/update_user")
+def update_user(u: UserUpdate):
+    global users
     if u.username not in users:
-        return {"status": "error", "msg": "Invalid credentials"}
+        return {"status": "error", "msg": "User not found"}
+    if u.password: users[u.username]["password"] = u.password
+    if u.role: users[u.username]["role"] = u.role
+    save_users(users)
+    return {"status": "ok", "msg": "User updated"}
 
-    if users[u.username]["password"] != u.password:
-        return {"status": "error", "msg": "Invalid credentials"}
-
-    return {
-        "status": "ok",
-        "user": {
-            "username": u.username,
-            "role": users[u.username]["role"],
-        },
-    }
-
+@app.post("/delete_user")
+def delete_user(u: UserDelete):
+    global users
+    if u.username == "admin":
+        return {"status": "error", "msg": "Cannot delete default admin"}
+    if u.username not in users:
+        return {"status": "error", "msg": "User not found"}
+    del users[u.username]
+    save_users(users)
+    return {"status": "ok", "msg": "User deleted"}
 
 @app.get("/users")
 def list_users():
     return users
 
-
-@app.post("/add_user")
-def add_user(u: UserCreate):
-    if u.username in users:
-        return {"status": "error", "msg": "User exists"}
-
-    users[u.username] = {"password": u.password, "role": u.role}
-    save_users(users)
-    return {"status": "ok"}
-
-
-@app.post("/update_user")
-def update_user(u: UserUpdate):
-    if u.username not in users:
-        return {"status": "error"}
-
-    if u.password:
-        users[u.username]["password"] = u.password
-    if u.role:
-        users[u.username]["role"] = u.role
-
-    save_users(users)
-    return {"status": "ok"}
-
-
-@app.post("/delete_user")
-def delete_user(u: UserDelete):
-    if u.username == "admin":
-        return {"status": "error", "msg": "Cannot delete admin"}
-
-    users.pop(u.username, None)
-    save_users(users)
-    return {"status": "ok"}
+@app.post("/login")
+def login(u: UserLogin):
+    if u.username not in users or users[u.username]["password"] != u.password:
+        return {"status": "error", "msg": "Invalid username or password"}
+    return {"status": "ok", "user": {"username": u.username, "role": users[u.username]["role"]}}
 
 # =====================================================
-# SENSOR PARSER
+# PARSE SENSOR MESSAGES
 # =====================================================
-def parse_sensor_message(raw):
+def parse_sensor_message(raw: str):
     result = {}
     try:
         start = raw.find("[") + 1
@@ -173,91 +151,88 @@ def parse_sensor_message(raw):
         time_str = parts.split()[0]
         result["time"] = time_str
 
-        sensors = parts[len(time_str):].strip().split("|")
-        for s in sensors:
-            if ":" in s:
-                k, v = s.split(":")
-                v = v.replace("C", "").replace("%", "").replace("V", "").strip()
-                try:
-                    v = float(v)
-                except:
-                    pass
-                result[k.strip().lower()] = v
-    except:
-        pass
+        sensors_str = parts[len(time_str):].strip()
+        sensor_parts = sensors_str.split("|")
 
+        for part in sensor_parts:
+            part = part.strip()
+            if ":" in part:
+                key, val = part.split(":", 1)
+                key = key.strip()
+                val = val.strip()
+                val = val.replace("C", "").replace("%", "").replace("V", "").replace("ms", "").replace("(MANUAL)", "").strip()
+                try: val = float(val) if "." in val else int(val)
+                except Exception: pass
+                result[key.lower()] = val
+    except Exception as e:
+        print("Parse error:", e)
     return result
 
 # =====================================================
 # MQTT CALLBACKS
 # =====================================================
 def on_connect(client, userdata, flags, rc):
+    print("MQTT connected:", rc)
     client.subscribe("iot/pi/data")
-
 
 def on_message(client, userdata, msg):
     global latest_data, system_limits
-
     raw = msg.payload.decode()
     parsed = parse_sensor_message(raw)
-
     if parsed:
         node = parsed["node"]
-
         if node not in system_limits:
-            system_limits[node] = {"temp_th": 30.0, "gas_th": 1.2}
-
+            system_limits[node] = {"temp_th": 30.0, "gas_th": 1.20}
         parsed["temp_th"] = system_limits[node]["temp_th"]
         parsed["gas_th"] = system_limits[node]["gas_th"]
-
         latest_data[node] = parsed
 
 # =====================================================
-# MQTT SETUP
+# MQTT CLIENT SETUP
 # =====================================================
 mqtt_client = mqtt.Client()
 mqtt_client.username_pw_set("p_user", "P_user123")
 mqtt_client.tls_set()
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
-
-mqtt_client.connect(
-    "08d5c716cf9f46518abcda4d565e5141.s1.eu.hivemq.cloud",
-    8883
-)
+mqtt_client.connect("08d5c716cf9f46518abcda4d565e5141.s1.eu.hivemq.cloud", port=8883)
 mqtt_client.loop_start()
 
 # =====================================================
-# API ROUTES
+# BASIC ROUTES
 # =====================================================
 @app.get("/")
 def root():
     return {"message": "Backend working!"}
 
-
-@app.get("/realtime")
+@app.get("/data")
 def realtime():
     return latest_data
 
+@app.get("/history")
+def history_data():
+    # Dummy history for now
+    return {node: {"time": ["t1","t2"], "temp":[25,26], "gas":[1.1,1.2]} for node in latest_data.keys()}
 
+# =====================================================
+# IOT COMMAND & LIMIT ROUTES
+# =====================================================
 @app.post("/command")
 def send_command(cmd: Command):
-    msg = f"{cmd.device}:{cmd.action.replace('_', ' ')}"
-    mqtt_client.publish("iot/pi/command", msg)
-    return {"status": "ok"}
+    message = f"{cmd.device}:{cmd.action.replace('_', ' ')}"
+    r = mqtt_client.publish("iot/pi/command", message)
+    print("Publishing:", message, "→ RC =", r.rc)
+    return {"status": "ok", "sent": message}
 
-
-@app.post("/set_limits")
-def set_limits(l: LimitUpdate):
-    if l.device not in system_limits:
-        system_limits[l.device] = {"temp_th": 30.0, "gas_th": 1.2}
-
-    if l.temp_th is not None:
-        system_limits[l.device]["temp_th"] = l.temp_th
-        mqtt_client.publish("iot/pi/command", f"{l.device}:TEMP={l.temp_th}")
-
-    if l.gas_th is not None:
-        system_limits[l.device]["gas_th"] = l.gas_th
-        mqtt_client.publish("iot/pi/command", f"{l.device}:GAS={l.gas_th}")
-
-    return {"status": "ok", "limits": system_limits[l.device]}
+@app.post("/update_limits")
+def set_limits(limit: LimitUpdate):
+    device = limit.device
+    if device not in system_limits:
+        system_limits[device] = {"temp_th": 30.0, "gas_th": 1.20}
+    if limit.temp_th is not None:
+        system_limits[device]["temp_th"] = limit.temp_th
+        mqtt_client.publish("iot/pi/command", f"{device}:TEMP={limit.temp_th}")
+    if limit.gas_th is not None:
+        system_limits[device]["gas_th"] = limit.gas_th
+        mqtt_client.publish("iot/pi/command", f"{device}:GAS={limit.gas_th}")
+    return {"status": "ok", "updated_device": device, "limits": system_limits[device]}
