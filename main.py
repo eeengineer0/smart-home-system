@@ -5,9 +5,9 @@ import paho.mqtt.client as mqtt
 import json
 import os
 
-# =====================================================
-# USER STORAGE (FIXED FOR CLOUD HOSTING)
-# =====================================================
+# ==========================
+# USER STORAGE
+# ==========================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 USERS_FILE = os.path.join(BASE_DIR, "users.json")
 
@@ -18,8 +18,6 @@ def load_users():
                 return json.load(f)
         except Exception as e:
             print(f"ERROR: File exists but is corrupt: {e}")
-
-    # Default users
     default_users = {
         "admin": {"password": "admin123", "role": "admin"},
         "user": {"password": "user123", "role": "user"},
@@ -40,34 +38,28 @@ def save_users(users_dict):
 
 users = load_users()
 
-# =====================================================
+# ==========================
 # FASTAPI APP
-# =====================================================
+# ==========================
 app = FastAPI()
 
-# ==================== CORS FIX =====================
+# Replace with your frontend URLs
 origins = [
     "http://localhost:5173",
-    "https://your-vercel-app.vercel.app",  # Replace with your Vercel URL
+    "https://smart-home-system-2qcl.vercel.app",
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=origins,  
     allow_credentials=True,
-    allow_methods=["*"],  # Important for OPTIONS preflight
+    allow_methods=["*"],  # Important for preflight
     allow_headers=["*"],  # Important for Content-Type
 )
 
-# =====================================================
-# STORAGE FOR IOT DATA
-# =====================================================
-latest_data: dict = {}
-system_limits: dict = {}
-
-# =====================================================
-# Pydantic MODELS
-# =====================================================
+# ==========================
+# Pydantic Models
+# ==========================
 class UserCreate(BaseModel):
     username: str
     password: str
@@ -94,9 +86,15 @@ class LimitUpdate(BaseModel):
     temp_th: float | None = None
     gas_th: float | None = None
 
-# =====================================================
+# ==========================
+# IoT Data Storage
+# ==========================
+latest_data: dict = {}
+system_limits: dict = {}
+
+# ==========================
 # USER ROUTES
-# =====================================================
+# ==========================
 @app.post("/add_user")
 def add_user(u: UserCreate):
     global users
@@ -137,40 +135,32 @@ def login(u: UserLogin):
         return {"status": "error", "msg": "Invalid username or password"}
     return {"status": "ok", "user": {"username": u.username, "role": users[u.username]["role"]}}
 
-# =====================================================
-# PARSE SENSOR MESSAGES
-# =====================================================
+# ==========================
+# MQTT CLIENT SETUP
+# ==========================
 def parse_sensor_message(raw: str):
     result = {}
     try:
         start = raw.find("[") + 1
         end = raw.find("]")
         result["node"] = raw[start:end]
-
         parts = raw.split("] - ")[1]
         time_str = parts.split()[0]
         result["time"] = time_str
-
         sensors_str = parts[len(time_str):].strip()
         sensor_parts = sensors_str.split("|")
-
         for part in sensor_parts:
             part = part.strip()
             if ":" in part:
                 key, val = part.split(":", 1)
-                key = key.strip()
-                val = val.strip()
-                val = val.replace("C", "").replace("%", "").replace("V", "").replace("ms", "").replace("(MANUAL)", "").strip()
+                val = val.replace("C","").replace("%","").replace("V","").replace("ms","").replace("(MANUAL)","").strip()
                 try: val = float(val) if "." in val else int(val)
-                except Exception: pass
+                except: pass
                 result[key.lower()] = val
     except Exception as e:
         print("Parse error:", e)
     return result
 
-# =====================================================
-# MQTT CALLBACKS
-# =====================================================
 def on_connect(client, userdata, flags, rc):
     print("MQTT connected:", rc)
     client.subscribe("iot/pi/data")
@@ -187,9 +177,6 @@ def on_message(client, userdata, msg):
         parsed["gas_th"] = system_limits[node]["gas_th"]
         latest_data[node] = parsed
 
-# =====================================================
-# MQTT CLIENT SETUP
-# =====================================================
 mqtt_client = mqtt.Client()
 mqtt_client.username_pw_set("p_user", "P_user123")
 mqtt_client.tls_set()
@@ -198,9 +185,9 @@ mqtt_client.on_message = on_message
 mqtt_client.connect("08d5c716cf9f46518abcda4d565e5141.s1.eu.hivemq.cloud", port=8883)
 mqtt_client.loop_start()
 
-# =====================================================
+# ==========================
 # BASIC ROUTES
-# =====================================================
+# ==========================
 @app.get("/")
 def root():
     return {"message": "Backend working!"}
@@ -209,20 +196,14 @@ def root():
 def realtime():
     return latest_data
 
-@app.get("/history")
-def history_data():
-    # Dummy history for now
-    return {node: {"time": ["t1","t2"], "temp":[25,26], "gas":[1.1,1.2]} for node in latest_data.keys()}
-
-# =====================================================
-# IOT COMMAND & LIMIT ROUTES
-# =====================================================
+# ==========================
+# COMMAND & LIMITS
+# ==========================
 @app.post("/command")
 def send_command(cmd: Command):
-    message = f"{cmd.device}:{cmd.action.replace('_', ' ')}"
-    r = mqtt_client.publish("iot/pi/command", message)
-    print("Publishing:", message, "→ RC =", r.rc)
-    return {"status": "ok", "sent": message}
+    msg = f"{cmd.device}:{cmd.action.replace('_',' ')}"
+    mqtt_client.publish("iot/pi/command", msg)
+    return {"status": "ok", "sent": msg}
 
 @app.post("/update_limits")
 def set_limits(limit: LimitUpdate):
