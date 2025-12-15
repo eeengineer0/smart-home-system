@@ -46,7 +46,7 @@ app = FastAPI()
 # Replace with your frontend URLs
 origins = [
     "http://localhost:5173",
-    "smarthome495.netlify.app",
+    "https://smarthome495.netlify.app",
 ]
 
 app.add_middleware(
