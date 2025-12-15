@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import Login from "./components/Login";
-import Dashboard from "./components/Dashboard";
-import UserManager from "./components/UserManager";
+import Login from "./components/Login.jsx";
+import Dashboard from "./components/Dashboard.jsx";
+import UserManager from "./components/UserManager.jsx";
 
 const API = import.meta.env.VITE_API_BASE_URL;
 
